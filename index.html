@@ -68,6 +68,7 @@ canvas{display:block;width:100%;height:100%}
     <p><b>Big Timber.</b> The next boss is a giant angry oak that never stops stomping toward you. Chop or jump the logs he hurls, jump the apples, and chainsaw his trunk when he gets close.</p>
     <p><b>Hat-thief crows.</b> They swoop up and down. Chop them when they dip low, or jump them. If one reaches Bob it steals his hat, and you chop the next crow to get it back. No hat? Then it pecks.</p>
     <p><b>Skunks.</b> Do NOT chainsaw a skunk. Jump over it for +30. Rev near one (even with MEGA SAW) or bump into it and PEE-YEW.</p>
+    <p><b>Salad.</b> The one food Bob should eat. Run straight into the sparkly green bowl: it shrinks his belly and gives back a heart. He complains the whole time.</p>
     <p><b>Gas can.</b> Jump for the glowing gas can to get MEGA SAW: six seconds of non-stop golden chainsaw that even slices snacks.</p>
   </section>
 </div>
@@ -94,13 +95,13 @@ canvas{display:block;width:100%;height:100%}
   const S = { mode:'title', t:0, scroll:0, speed:300, dist:0, bonus:0, hearts:3, snacks:0,
               obs:[], parts:[], pops:[], spawnIn:1, shake:0, overT:0, reason:'', final:0, newBest:false,
               boss:null, nextBoss:800, bossCount:0, megaBuzz:0, stink:0 };
-  const bob = { y:GROUND, vy:0, ground:true, run:0, saw:0, sawCd:0, inv:0, eat:0, trip:0, belly:1, mega:0, hatless:false };
+  const bob = { y:GROUND, vy:0, ground:true, run:0, saw:0, sawCd:0, inv:0, eat:0, trip:0, belly:1, mega:0, hatless:false, yuck:0 };
 
   function reset() {
     Object.assign(S, { mode:'play', t:0, speed:300, dist:0, bonus:0, hearts:3, snacks:0,
                        obs:[], parts:[], pops:[], spawnIn:1, shake:0, overT:0,
                        boss:null, nextBoss:800, bossCount:0, megaBuzz:0, stink:0 });
-    Object.assign(bob, { y:GROUND, vy:0, ground:true, saw:0, sawCd:0, inv:0, eat:0, trip:0, belly:1, mega:0, hatless:false });
+    Object.assign(bob, { y:GROUND, vy:0, ground:true, saw:0, sawCd:0, inv:0, eat:0, trip:0, belly:1, mega:0, hatless:false, yuck:0 });
   }
   const score = () => Math.floor(S.dist / 10) + S.bonus;
 
@@ -134,6 +135,7 @@ canvas{display:block;width:100%;height:100%}
     toss: () => audio.tone(500, 900, .1, 'sine', .1),
     caw:  () => { audio.tone(900, 500, .12, 'sawtooth', .08); audio.tone(850, 450, .12, 'sawtooth', .08, .15); },
     stink:() => { audio.tone(180, 90, .5, 'sawtooth', .08); audio.tone(140, 70, .6, 'triangle', .15, .1); },
+    salad:() => { audio.tone(300, 260, .05, 'square', .08); audio.tone(320, 280, .05, 'square', .08, .08); [440, 554, 659].forEach((f, i) => audio.tone(f, f, .14, 'sine', .14, .2 + i * .1)); },
     win:  () => [523, 659, 784, 1047].forEach((f, i) => audio.tone(f, f, .18, 'square', .1, i * .12))
   };
 
@@ -161,6 +163,8 @@ canvas{display:block;width:100%;height:100%}
       S.obs.push({ kind:'crow', x:W + 40, baseY:GROUND - 100, y:GROUND - 100, w:34, h:22, ph:Math.random()*6 });
     } else if (sc > 400 && r > .78) {
       S.obs.push({ kind:'skunk', x:W + 40, y:GROUND - 30, w:44, h:30 });
+    } else if (sc > 250 && r > .70 && r < .76) {
+      S.obs.push({ kind:'salad', x:W + 40, y:GROUND - 30, w:38, h:30 });
     } else if (sc > 300 && r < .22) {
       S.obs.push({ kind:'food', food:pick(FOODS), air:true, x:W + 40, y:GROUND - 150, w:40, h:34, ph:Math.random()*6 });
     } else if (r < .62) {
@@ -232,6 +236,17 @@ canvas{display:block;width:100%;height:100%}
     sfx.stink();
     if (S.hearts <= 0) gameOver('skunk');
   }
+  // Salad: the one food Bob should eat. It shrinks his belly a size and gives
+  // back a heart. He pulls a face about it every single time.
+  function eatSalad(o) {
+    o.dead = true;
+    bob.yuck = 1.2;
+    if (S.snacks > 0) { S.snacks--; bob.belly = 1 + S.snacks * .14; }
+    if (S.hearts < 3) { S.hearts++; pop('SALAD?! FINE... +1 HEART', BX + 40, bob.y - 140, '#7fd36b'); }
+    else { S.bonus += 50; pop('HIS DOCTOR IS PROUD +50', BX + 40, bob.y - 140, '#7fd36b'); }
+    burst(o.x + o.w / 2, o.y + 8, 14, '#5fb24a', 220, 220);
+    sfx.salad();
+  }
   function chopLog(o) {
     o.dead = true;
     S.bonus += 25;
@@ -296,6 +311,7 @@ canvas{display:block;width:100%;height:100%}
       bob.inv = Math.max(0, bob.inv - dt);
       bob.eat = Math.max(0, bob.eat - dt);
       bob.trip = Math.max(0, bob.trip - dt);
+      bob.yuck = Math.max(0, bob.yuck - dt);
       if (S.stink > 0) {
         S.stink = Math.max(0, S.stink - dt);
         if (Math.random() < .3) S.parts.push({ x:BX - 10 + Math.random()*40, y:bob.y - 110, vx:(Math.random() - .5)*30, vy:-30, life:.8, size:3 + Math.random()*4, color:'rgba(140,210,80,.55)', smoke:true });
@@ -329,6 +345,7 @@ canvas{display:block;width:100%;height:100%}
           }
           continue;
         }
+        if (o.kind === 'salad') { if (hit(hb, o)) eatSalad(o); continue; }
         if (o.kind === 'power') { if (hit(hb, o)) powerUp(o); continue; }
         if (o.kind === 'log' && saw && hit(saw, o)) { chopLog(o); continue; }
         if (o.kind === 'food' && bob.mega > 0 && saw && hit(saw, o)) { sliceFood(o); continue; }
@@ -674,6 +691,21 @@ canvas{display:block;width:100%;height:100%}
     ctx.fillStyle = '#fff'; circle(x + 4, y + 12, 2.5); ctx.fillStyle = '#222'; circle(x + 3.5, y + 12, 1.2);
     ctx.fillStyle = '#1d1f22'; ctx.fillRect(x + 10 + wig, y + 26, 4, 5); ctx.fillRect(x + 28 - wig, y + 26, 4, 5);
   }
+  function drawSalad(o) {
+    const cx = o.x + o.w / 2, base = o.y + o.h;
+    ctx.fillStyle = 'rgba(127,211,107,.3)'; circle(cx, base - 14, 24 + Math.sin(S.t * 6) * 2);
+    ctx.fillStyle = '#5fb24a'; circle(cx - 9, base - 18, 8); circle(cx + 9, base - 18, 8); circle(cx, base - 22, 9);
+    ctx.fillStyle = '#3f8a4a'; circle(cx - 3, base - 16, 6); circle(cx + 6, base - 24, 5);
+    ctx.fillStyle = '#e0352b'; circle(cx - 8, base - 22, 3.5); circle(cx + 10, base - 15, 3);
+    ctx.fillStyle = '#ffe066'; ctx.fillRect(cx + 1, base - 19, 4, 4);
+    ctx.fillStyle = '#f4ecd6'; ctx.beginPath(); ctx.ellipse(cx, base - 12, 19, 12, 0, 0, Math.PI); ctx.fill();
+    ctx.fillStyle = '#4dd0ff'; ctx.fillRect(cx - 16, base - 10, 32, 2.5);
+    if (Math.sin(S.t * 9) > .3) {   // sparkle, so it doesn't read as an ordinary snack
+      ctx.fillStyle = '#fff'; const sx = cx + 16, sy = base - 30;
+      ctx.beginPath(); ctx.moveTo(sx, sy - 6); ctx.lineTo(sx + 2, sy - 2); ctx.lineTo(sx + 6, sy); ctx.lineTo(sx + 2, sy + 2);
+      ctx.lineTo(sx, sy + 6); ctx.lineTo(sx - 2, sy + 2); ctx.lineTo(sx - 6, sy); ctx.lineTo(sx - 2, sy - 2); ctx.closePath(); ctx.fill();
+    }
+  }
   function drawPower(o) {
     const x = o.x, y = o.y + Math.sin(S.t * 5 + o.ph) * 5;
     ctx.fillStyle = 'rgba(255,211,61,.35)'; circle(x + 15, y + 17, 24 + Math.sin(S.t * 8) * 3);
@@ -778,6 +810,12 @@ canvas{display:block;width:100%;height:100%}
       ctx.fillStyle = C.skin; circle(hx + 15, hy + 5, 7);
       ctx.fillStyle = C.mouth; ellipse(hx + 12, hy + 12, 4.5, Math.sin(S.t * 30) > 0 ? 4 : 1.5);
     }
+    if (bob.yuck > 0) {
+      ctx.fillStyle = 'rgba(127,211,107,.7)'; circle(hx + 12, hy + 5, 5);
+      ctx.strokeStyle = C.mouth; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(hx + 6, hy + 14);
+      for (let i = 1; i <= 4; i++) ctx.lineTo(hx + 6 + i * 3, hy + 14 + (i % 2 ? -2 : 2));
+      ctx.stroke();
+    }
     ctx.fillStyle = C.nose; circle(hx + 18, hy + 1, 5);
 
     drawSaw(rx, cy);
@@ -813,7 +851,7 @@ canvas{display:block;width:100%;height:100%}
     if (S.shake > 0 && !RM) ctx.translate((Math.random() - .5) * 10 * S.shake / .3, (Math.random() - .5) * 10 * S.shake / .3);
     drawWorld();
     drawBoss();
-    for (const o of S.obs) o.kind === 'log' ? drawLog(o) : o.kind === 'power' ? drawPower(o) : o.kind === 'crow' ? drawCrow(o) : o.kind === 'skunk' ? drawSkunk(o) : drawFood(o);
+    for (const o of S.obs) o.kind === 'log' ? drawLog(o) : o.kind === 'power' ? drawPower(o) : o.kind === 'crow' ? drawCrow(o) : o.kind === 'skunk' ? drawSkunk(o) : o.kind === 'salad' ? drawSalad(o) : drawFood(o);
     drawBob();
     for (const p of S.parts) {
       ctx.globalAlpha = Math.min(1, p.life * 2);
