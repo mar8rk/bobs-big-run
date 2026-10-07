@@ -65,6 +65,7 @@ canvas{display:block;width:100%;height:100%}
     <p><b>Snacks.</b> Bob's one weakness. Jump over them. Every snack he eats makes him bigger and costs a heart.</p>
     <p><b>Flying snacks.</b> They show up later, up high. Stay on the ground and chop the logs instead.</p>
     <p><b>The Cake King.</b> At 800 points a giant cake with a crown stomps in, throwing cupcakes. You can't jump him. Wait for him to charge, then chainsaw him until he's crumbs.</p>
+    <p><b>Big Timber.</b> The next boss is a giant angry oak that never stops stomping toward you. Chop or jump the logs he hurls, jump the apples, and chainsaw his trunk when he gets close.</p>
     <p><b>Gas can.</b> Jump for the glowing gas can to get MEGA SAW: six seconds of non-stop golden chainsaw that even slices snacks.</p>
   </section>
 </div>
@@ -290,14 +291,21 @@ canvas{display:block;width:100%;height:100%}
     S.shake = Math.max(0, S.shake - dt);
   }
 
-  /* ---------- the boss: the Cake King ---------- */
-  // Shows up every so often, tosses cupcakes, then charges. Bob can't jump him;
-  // only the chainsaw works. Touching him means Bob takes a bite (and a heart).
+  /* ---------- the bosses: the Cake King and Big Timber ---------- */
+  // They take turns. The Cake King tosses cupcakes, then charges; touching him
+  // means Bob takes a bite. Big Timber stomps forward without stopping, hurling
+  // logs and shaking apples loose. Neither can be jumped; only the chainsaw works.
   const HOME_X = 440;
+  const BOSSES = {
+    cake: { name:'THE CAKE KING', color:'#ff7eb6', hp:5, w:110 },
+    tree: { name:'BIG TIMBER',    color:'#7fd36b', hp:6, w:100 }
+  };
   function startBoss() {
-    const hp = 5 + S.bossCount * 2;
-    S.boss = { x:W + 40, w:110, h:128, hp, maxHp:hp, state:'enter', t:0, idleFor:2.5, throwIn:1.2, hurt:0, vx:0, step:0 };
-    pop('THE CAKE KING APPROACHES!', W / 2, 110, '#ff7eb6');
+    const type = S.bossCount % 2 === 0 ? 'cake' : 'tree';
+    const hp = BOSSES[type].hp + Math.floor(S.bossCount / 2) * 2;
+    S.boss = { type, x:W + 40, w:BOSSES[type].w, h:128, hp, maxHp:hp, state:'enter', t:0, idleFor:2.5,
+               throwIn:1.2, appleIn:2.4, hurt:0, vx:0, step:0 };
+    pop(BOSSES[type].name + ' APPROACHES!', W / 2, 110, BOSSES[type].color);
     sfx.boss();
   }
   const bossBox = b => ({ x:b.x + 8, y:GROUND - b.h, w:b.w - 16, h:b.h });
@@ -309,7 +317,21 @@ canvas{display:block;width:100%;height:100%}
     b.t += dt; b.hurt = Math.max(0, b.hurt - dt); b.step += dt * 9;
     if (b.state === 'enter') {
       b.x -= 160 * dt;
-      if (b.x <= HOME_X) { b.x = HOME_X; b.state = 'idle'; b.t = 0; }
+      if (b.x <= HOME_X) { b.x = HOME_X; b.state = b.type === 'tree' ? 'advance' : 'idle'; b.t = 0; }
+    } else if (b.state === 'advance') {
+      b.x -= (55 + S.bossCount * 6) * dt;
+      if (b.x > BX + 230) {   // stop throwing once he's close, so Bob only has the trunk to deal with
+        b.throwIn -= dt; b.appleIn -= dt;
+        if (b.throwIn <= 0) {
+          S.obs.push({ kind:'log', x:b.x - 20, y:GROUND - 36, w:50, h:36 });
+          b.throwIn = 1.5 + Math.random() * .8; b.appleIn = Math.max(b.appleIn, .7); sfx.toss();
+        }
+        if (b.appleIn <= 0) {
+          S.obs.push({ kind:'food', food:'apple', x:b.x - 30, y:GROUND - 30, w:30, h:30 });
+          b.appleIn = 2.6 + Math.random(); b.throwIn = Math.max(b.throwIn, .7);
+          burst(b.x + 40, GROUND - 150, 6, '#4e9b55', 120, 60);
+        }
+      }
     } else if (b.state === 'idle') {
       b.throwIn -= dt;
       if (b.throwIn <= 0) {
@@ -321,36 +343,51 @@ canvas{display:block;width:100%;height:100%}
       b.x -= (190 + S.bossCount * 25) * dt;
     } else if (b.state === 'back') {
       b.x += b.vx * dt; b.vx = Math.max(160, b.vx - 600 * dt);
-      if (b.x >= HOME_X) { b.x = HOME_X; b.state = 'idle'; b.t = 0; b.throwIn = .8; b.idleFor = 2 + Math.random() * 1.2; }
+      if (b.x >= HOME_X) { b.x = HOME_X; b.state = b.type === 'tree' ? 'advance' : 'idle'; b.t = 0; b.throwIn = .8; b.idleFor = 2 + Math.random() * 1.2; }
     }
 
     const box = bossBox(b);
     if (saw && b.hurt <= 0 && b.state !== 'back' && hit(saw, box)) {
       b.hp--; b.hurt = .45; knockBack(b, 520);
       S.bonus += 50;
-      pop('SLICE! +50', b.x + 20, GROUND - b.h - 12, C.sawBody);
-      burst(b.x + 10, GROUND - 60, 18, '#ffb3d1'); burst(b.x + 10, GROUND - 60, 8, '#fff6d8');
+      const tree = b.type === 'tree';
+      pop(tree ? 'CHOP! +50' : 'SLICE! +50', b.x + 20, GROUND - b.h - 12, C.sawBody);
+      burst(b.x + 10, GROUND - 60, 18, tree ? '#e3b77a' : '#ffb3d1'); burst(b.x + 10, GROUND - 60, 8, tree ? '#4e9b55' : '#fff6d8');
       S.shake = .2; sfx.chop();
       if (b.hp <= 0) defeatBoss();
-    } else if (b.state === 'lunge' && hit(hb, box)) {
+    } else if ((b.state === 'lunge' || b.state === 'advance') && hit(hb, box)) {
       knockBack(b, 420);
       if (bob.inv <= 0) {
-        S.hearts--; S.snacks++;
-        bob.belly = 1 + S.snacks * .14; bob.eat = .8; bob.inv = 1.3;
-        pop('BOB TOOK A BITE OF THE KING!', W / 2, 110, '#ffe066');
-        burst(BX + 40, bob.y - 60, 14, '#ffb3d1');
-        sfx.munch();
-        if (S.hearts <= 0) gameOver('boss');
+        S.hearts--; bob.inv = 1.3;
+        if (b.type === 'tree') {
+          bob.trip = .5; S.shake = .3;
+          pop('BONK! BIG TIMBER STOMPED BOB!', W / 2, 110, '#fff');
+          sfx.thud();
+        } else {
+          S.snacks++; bob.belly = 1 + S.snacks * .14; bob.eat = .8;
+          pop('BOB TOOK A BITE OF THE KING!', W / 2, 110, '#ffe066');
+          burst(BX + 40, bob.y - 60, 14, '#ffb3d1');
+          sfx.munch();
+        }
+        if (S.hearts <= 0) gameOver(b.type === 'tree' ? 'tree' : 'boss');
       }
     }
   }
   function defeatBoss() {
     const b = S.boss;
     S.bonus += 500; S.bossCount++;
-    ['#ff7eb6','#fff6d8','#ffd33d','#ffb3d1'].forEach((c, i) => burst(b.x + 20 + i * 20, GROUND - 40 - i * 20, 14, c, 420, 520));
-    S.parts.push({ crown:true, x:b.x + 30, y:GROUND - b.h - 18, vx:140, vy:-520, rot:0, vr:5, life:2 });
-    pop('YOU BEAT THE CAKE KING! +500', W / 2, 100, '#ffd33d');
-    pop('(Bob is still a little hungry)', W / 2, 130, '#fff');
+    if (b.type === 'tree') {
+      S.parts.push({ log:true, x:b.x + 10, y:GROUND - 120, w:40, h:110, vx:-120, vy:-420, rot:0, vr:-3, life:2 });
+      S.parts.push({ log:true, x:b.x + 50, y:GROUND - 120, w:40, h:110, vx:200, vy:-380, rot:0, vr:4, life:2 });
+      ['#3f8a4a','#4e9b55','#5fb24a','#e0352b'].forEach((c, i) => burst(b.x + 20 + i * 20, GROUND - 150, 16, c, 420, 420));
+      pop('TIMBER!!! +500', W / 2, 100, '#7fd36b');
+      pop('(Bob says he was firewood all along)', W / 2, 130, '#fff');
+    } else {
+      ['#ff7eb6','#fff6d8','#ffd33d','#ffb3d1'].forEach((c, i) => burst(b.x + 20 + i * 20, GROUND - 40 - i * 20, 14, c, 420, 520));
+      S.parts.push({ crown:true, x:b.x + 30, y:GROUND - b.h - 18, vx:140, vy:-520, rot:0, vr:5, life:2 });
+      pop('YOU BEAT THE CAKE KING! +500', W / 2, 100, '#ffd33d');
+      pop('(Bob is still a little hungry)', W / 2, 130, '#fff');
+    }
     S.boss = null; S.nextBoss = score() + 1500; S.spawnIn = 1.6; S.shake = .3;
     sfx.win();
   }
@@ -362,9 +399,37 @@ canvas{display:block;width:100%;height:100%}
     ctx.fillStyle = '#d8412f'; circle(x + 25, y + 22, 4);
     ctx.fillStyle = '#4dd0ff'; circle(x + 11, y + 26, 3); circle(x + 39, y + 26, 3);
   }
+  function drawTree(b) {
+    if (b.hurt > 0 && Math.floor(b.hurt * 20) % 2 === 0) ctx.globalAlpha = .45;
+    const x = b.x, g = GROUND, w = b.w, walk = Math.sin(b.step * .6);
+    ctx.fillStyle = '#5c3a1e';   // root feet
+    rr(x + 8 + walk * 5, g - 14, 26, 14, 6); rr(x + w - 34 - walk * 5, g - 14, 26, 14, 6); rr(x + w / 2 - 10, g - 12, 20, 12, 5);
+    ctx.save();
+    ctx.translate(0, -Math.abs(walk) * 3);
+    ctx.fillStyle = '#7d5029'; rr(x + 10, g - 128, w - 20, 118, 12);
+    ctx.strokeStyle = 'rgba(0,0,0,.22)'; ctx.lineWidth = 3;
+    for (let i = 0; i < 4; i++) line(x + 22 + i * 18, g - 118, x + 18 + i * 19, g - 20);
+    const wave = Math.sin(b.t * 3) * 8;   // branch arms, waving
+    ctx.strokeStyle = '#7d5029'; ctx.lineWidth = 12; ctx.lineCap = 'round';
+    line(x + 14, g - 90, x - 18, g - 112 + wave); line(x + w - 14, g - 90, x + w + 14, g - 116 - wave);
+    ctx.lineCap = 'butt';
+    ['#3f8a4a','#4e9b55','#5fb24a'].forEach((c, i) => { ctx.fillStyle = c; circle(x + 18 + i * 32, g - 150 + (i % 2) * 8, 34); });
+    ctx.fillStyle = '#4e9b55'; circle(x + w / 2, g - 176, 32);
+    ctx.fillStyle = '#e0352b'; [[14,-150],[48,-172],[80,-146],[62,-134]].forEach(([dx, dy]) => circle(x + dx, g + dy, 6));
+    ctx.fillStyle = '#ffe066'; circle(x + 32, g - 92, 8); circle(x + 62, g - 92, 8);   // glowing angry eyes
+    ctx.fillStyle = '#222'; circle(x + 29, g - 91, 3.5); circle(x + 59, g - 91, 3.5);
+    ctx.strokeStyle = '#3a2716'; ctx.lineWidth = 5; ctx.lineCap = 'round';
+    line(x + 20, g - 106, x + 40, g - 99); line(x + 74, g - 106, x + 54, g - 99); ctx.lineCap = 'butt';
+    ctx.fillStyle = '#3a2716'; ellipse(x + 47, g - 60, 18, 8);
+    ctx.fillStyle = '#f4ecd6';
+    for (let i = 0; i < 5; i++) { ctx.beginPath(); ctx.moveTo(x + 33 + i * 6, g - 67); ctx.lineTo(x + 36 + i * 6, g - 60); ctx.lineTo(x + 39 + i * 6, g - 67); ctx.fill(); }
+    ctx.restore();
+    ctx.globalAlpha = 1;
+  }
   function drawBoss() {
     const b = S.boss;
     if (!b) return;
+    if (b.type === 'tree') return drawTree(b);
     if (b.hurt > 0 && Math.floor(b.hurt * 20) % 2 === 0) ctx.globalAlpha = .45;
     const x = b.x, g = GROUND, w = b.w, walk = b.state === 'idle' ? 0 : Math.sin(b.step);
     ctx.fillStyle = '#7a4a2a'; rr(x + 24 + walk * 6, g - 18, 14, 18, 4); rr(x + w - 38 - walk * 6, g - 18, 14, 18, 4);
@@ -497,6 +562,12 @@ canvas{display:block;width:100%;height:100%}
         ctx.fillStyle = '#ffcf5a'; ctx.beginPath(); ctx.moveTo(cx - 18, cy - 14); ctx.lineTo(cx + 18, cy - 14); ctx.lineTo(cx, cy + 18); ctx.fill();
         ctx.fillStyle = '#c9862f'; rr(cx - 20, cy - 18, 40, 7, 3);
         ctx.fillStyle = '#d8412f'; circle(cx - 6, cy - 6, 4); circle(cx + 6, cy - 4, 3.5); circle(cx, cy + 5, 3);
+        break;
+      case 'apple':
+        ctx.fillStyle = '#e0352b'; circle(cx - 5, cy + 2, 11); circle(cx + 5, cy + 2, 11);
+        ctx.fillStyle = 'rgba(255,255,255,.35)'; ellipse(cx - 7, cy - 3, 4, 2.5);
+        ctx.fillStyle = '#6b4a2b'; ctx.fillRect(cx - 1, cy - 14, 3, 7);
+        ctx.fillStyle = '#5fb24a'; ellipse(cx + 6, cy - 11, 6, 3);
         break;
       case 'cupcake':
         ctx.fillStyle = '#5bb6e8'; ctx.beginPath(); ctx.moveTo(cx - 13, cy); ctx.lineTo(cx + 13, cy); ctx.lineTo(cx + 9, cy + 17); ctx.lineTo(cx - 9, cy + 17); ctx.fill();
@@ -631,9 +702,10 @@ canvas{display:block;width:100%;height:100%}
     for (let i = 0; i < 3; i++) heart(W - 26 - i * 32, 14, 24, i < S.hearts ? C.heart : 'rgba(0,0,0,.25)');
     const b = S.boss;
     if (b && b.state !== 'enter') {
-      label('THE CAKE KING', W / 2, 20, 16, 'center', '#ff7eb6');
+      const info = BOSSES[b.type];
+      label(info.name, W / 2, 20, 16, 'center', info.color);
       ctx.fillStyle = C.ink; rr(W / 2 - 92, 32, 184, 14, 7);
-      ctx.fillStyle = '#ff7eb6'; if (b.hp > 0) rr(W / 2 - 89, 35, 178 * b.hp / b.maxHp, 8, 4);
+      ctx.fillStyle = info.color; if (b.hp > 0) rr(W / 2 - 89, 35, 178 * b.hp / b.maxHp, 8, 4);
     }
   }
   function overlay(lines) {
@@ -675,7 +747,8 @@ canvas{display:block;width:100%;height:100%}
     const OVER = {
       food: ['BOB ATE TOO MANY SNACKS', 'Nap time. Zzzzz...'],
       log:  ['BOB TRIPPED ONE TOO MANY TIMES', 'Ouch. Somebody get Bob an ice pack.'],
-      boss: ['THE CAKE KING WINS', 'Bob ate half the kingdom. Nap time.']
+      boss: ['THE CAKE KING WINS', 'Bob ate half the kingdom. Nap time.'],
+      tree: ['BIG TIMBER WINS', 'Bob got stomped flat as a pancake. Mmm, pancakes...']
     };
     if (S.mode === 'over') overlay([
       [OVER[S.reason][0], 92, 28, '#ff8a1f'],
