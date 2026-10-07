@@ -65,6 +65,7 @@ canvas{display:block;width:100%;height:100%}
     <p><b>Snacks.</b> Bob's one weakness. Jump over them. Every snack he eats makes him bigger and costs a heart.</p>
     <p><b>Flying snacks.</b> They show up later, up high. Stay on the ground and chop the logs instead.</p>
     <p><b>The Cake King.</b> At 800 points a giant cake with a crown stomps in, throwing cupcakes. You can't jump him. Wait for him to charge, then chainsaw him until he's crumbs.</p>
+    <p><b>Gas can.</b> Jump for the glowing gas can to get MEGA SAW: six seconds of non-stop golden chainsaw that even slices snacks.</p>
   </section>
 </div>
 
@@ -89,14 +90,14 @@ canvas{display:block;width:100%;height:100%}
 
   const S = { mode:'title', t:0, scroll:0, speed:300, dist:0, bonus:0, hearts:3, snacks:0,
               obs:[], parts:[], pops:[], spawnIn:1, shake:0, overT:0, reason:'', final:0, newBest:false,
-              boss:null, nextBoss:800, bossCount:0 };
-  const bob = { y:GROUND, vy:0, ground:true, run:0, saw:0, sawCd:0, inv:0, eat:0, trip:0, belly:1 };
+              boss:null, nextBoss:800, bossCount:0, megaBuzz:0 };
+  const bob = { y:GROUND, vy:0, ground:true, run:0, saw:0, sawCd:0, inv:0, eat:0, trip:0, belly:1, mega:0 };
 
   function reset() {
     Object.assign(S, { mode:'play', t:0, speed:300, dist:0, bonus:0, hearts:3, snacks:0,
                        obs:[], parts:[], pops:[], spawnIn:1, shake:0, overT:0,
-                       boss:null, nextBoss:800, bossCount:0 });
-    Object.assign(bob, { y:GROUND, vy:0, ground:true, saw:0, sawCd:0, inv:0, eat:0, trip:0, belly:1 });
+                       boss:null, nextBoss:800, bossCount:0, megaBuzz:0 });
+    Object.assign(bob, { y:GROUND, vy:0, ground:true, saw:0, sawCd:0, inv:0, eat:0, trip:0, belly:1, mega:0 });
   }
   const score = () => Math.floor(S.dist / 10) + S.bonus;
 
@@ -149,7 +150,9 @@ canvas{display:block;width:100%;height:100%}
   /* ---------- world ---------- */
   function spawn() {
     const sc = score(), r = Math.random();
-    if (sc > 300 && r < .22) {
+    if (sc > 150 && bob.mega <= 0 && r < .08) {
+      S.obs.push({ kind:'power', x:W + 40, y:GROUND - 150, w:30, h:34, ph:Math.random()*6 });
+    } else if (sc > 300 && r < .22) {
       S.obs.push({ kind:'food', food:pick(FOODS), air:true, x:W + 40, y:GROUND - 150, w:40, h:34, ph:Math.random()*6 });
     } else if (r < .62) {
       const h = 34 + Math.random() * (sc > 500 ? 34 : 16);
@@ -163,7 +166,7 @@ canvas{display:block;width:100%;height:100%}
   const hit = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
   const bellyRx = () => 30 * bob.belly;
   const bobBox = () => { const rx = bellyRx(); return { x:BX - rx + 6, y:bob.y - 105, w:rx * 2 - 6, h:100 }; };
-  const sawBox = () => ({ x:BX + bellyRx() + 6, y:bob.y - 80, w:84, h:80 });
+  const sawBox = () => ({ x:BX + bellyRx() + 6, y:bob.y - 80, w:bob.mega > 0 ? 112 : 84, h:80 });
 
   function burst(x, y, n, color, spread = 260, up = 320) {
     for (let i = 0; i < n; i++) S.parts.push({ x, y, vx:(Math.random() - .5) * spread - 80, vy:-Math.random() * up,
@@ -171,6 +174,21 @@ canvas{display:block;width:100%;height:100%}
   }
   function pop(text, x, y, color = '#fff') { S.pops.push({ text, x, y, life:1, color }); }
 
+  // MEGA SAW: six seconds of non-stop chainsaw that even slices snacks.
+  function powerUp(o) {
+    o.dead = true;
+    bob.mega = 6; S.megaBuzz = 0;
+    pop('MEGA SAW!', BX + 40, bob.y - 140, '#ffd33d');
+    burst(o.x + o.w/2, o.y + o.h/2, 18, '#ffd33d', 300, 300);
+    sfx.win();
+  }
+  function sliceFood(o) {
+    o.dead = true;
+    S.bonus += 25;
+    pop('SNACK SLICED! +25', o.x + o.w/2, o.y - 12, '#ffd33d');
+    burst(o.x + o.w/2, o.y + o.h/2, 14, '#e3a14a');
+    sfx.chop();
+  }
   function chopLog(o) {
     o.dead = true;
     S.bonus += 25;
@@ -218,11 +236,20 @@ canvas{display:block;width:100%;height:100%}
         bob.y = GROUND; bob.vy = 0; bob.ground = true;
       }
       bob.run += dt * S.speed / 38;
+      if (bob.saw > 0 || bob.mega > 0) {
+        if (Math.random() < .5) S.parts.push({ x:BX + bellyRx() - 4, y:bob.y - 66, vx:-40 - Math.random()*40, vy:-60, life:.5, size:4 + Math.random()*4, color:'rgba(240,240,240,.7)', smoke:true });
+      }
       if (bob.saw > 0) {
         bob.saw -= dt;
-        if (Math.random() < .5) S.parts.push({ x:BX + bellyRx() - 4, y:bob.y - 66, vx:-40 - Math.random()*40, vy:-60, life:.5, size:4 + Math.random()*4, color:'rgba(240,240,240,.7)', smoke:true });
         if (bob.saw <= 0) bob.sawCd = .2;
       } else if (bob.sawCd > 0) bob.sawCd -= dt;
+      if (bob.mega > 0) {
+        bob.mega = Math.max(0, bob.mega - dt);
+        S.megaBuzz -= dt;
+        if (S.megaBuzz <= 0 && bob.mega > 0) { sfx.saw(); S.megaBuzz = .33; }
+        if (Math.random() < .4) S.parts.push({ x:BX + bellyRx() + 60 + Math.random()*30, y:bob.y - 50, vx:(Math.random() - .5)*200, vy:-150 - Math.random()*150, life:.35, size:2 + Math.random()*2, color:'#ffd33d' });
+        if (bob.mega === 0) pop('saw cooling down...', BX + 40, bob.y - 140, '#fff');
+      }
       bob.inv = Math.max(0, bob.inv - dt);
       bob.eat = Math.max(0, bob.eat - dt);
       bob.trip = Math.max(0, bob.trip - dt);
@@ -233,11 +260,13 @@ canvas{display:block;width:100%;height:100%}
         if (S.spawnIn <= 0) spawn();
       }
 
-      const hb = bobBox(), saw = bob.saw > 0 ? sawBox() : null;
+      const hb = bobBox(), saw = (bob.saw > 0 || bob.mega > 0) ? sawBox() : null;
       for (const o of S.obs) {
         o.x -= S.speed * dt;
         if (o.dead || S.mode !== 'play') continue;
+        if (o.kind === 'power') { if (hit(hb, o)) powerUp(o); continue; }
         if (o.kind === 'log' && saw && hit(saw, o)) { chopLog(o); continue; }
+        if (o.kind === 'food' && bob.mega > 0 && saw && hit(saw, o)) { sliceFood(o); continue; }
         if (bob.inv <= 0 && hit(hb, o)) {
           if (o.kind === 'food') { o.dead = true; eatFood(o); } else tripLog(o);
         }
@@ -481,20 +510,31 @@ canvas{display:block;width:100%;height:100%}
     }
   }
 
+  function drawPower(o) {
+    const x = o.x, y = o.y + Math.sin(S.t * 5 + o.ph) * 5;
+    ctx.fillStyle = 'rgba(255,211,61,.35)'; circle(x + 15, y + 17, 24 + Math.sin(S.t * 8) * 3);
+    ctx.fillStyle = '#d8412f'; rr(x, y + 4, 28, 30, 5);
+    ctx.fillStyle = '#2b2b2b'; rr(x + 4, y, 14, 7, 3);
+    ctx.fillStyle = '#ffd33d'; rr(x + 20, y - 2, 6, 10, 2);
+    ctx.beginPath(); ctx.moveTo(x + 17, y + 9); ctx.lineTo(x + 8, y + 21); ctx.lineTo(x + 14, y + 21);
+    ctx.lineTo(x + 11, y + 31); ctx.lineTo(x + 21, y + 17); ctx.lineTo(x + 15, y + 17); ctx.closePath(); ctx.fill();
+  }
+
   /* ---------- Bob ---------- */
   function drawSaw(rx, cy) {
-    const sx = rx - 10, sy = cy + 2, rev = bob.saw > 0;
+    const sx = rx - 10, sy = cy + 2, mega = bob.mega > 0, rev = bob.saw > 0 || mega, len = mega ? 78 : 58;
     ctx.strokeStyle = C.plaid; ctx.lineWidth = 10; ctx.lineCap = 'round';
     line(4, cy - 16, sx + 2, sy);
     ctx.lineCap = 'butt';
     ctx.save();
     if (rev) ctx.translate((Math.random() - .5) * 2.5, (Math.random() - .5) * 2.5);
     // bar + chain
-    ctx.fillStyle = C.bar; rr(sx + 24, sy - 7, 58, 11, 5.5);
+    if (mega) { ctx.fillStyle = 'rgba(255,211,61,.35)'; rr(sx + 18, sy - 14, len + 12, 25, 12); }
+    ctx.fillStyle = mega ? '#ffd33d' : C.bar; rr(sx + 24, sy - 7, len, 11, 5.5);
     ctx.fillStyle = '#4a4f55';
     const off = rev ? (S.t * 320) % 7 : 0;
-    for (let i = 0; i < 56; i += 7) {
-      const tx = sx + 26 + ((i + off) % 56);
+    for (let i = 0; i < len - 2; i += 7) {
+      const tx = sx + 26 + ((i + off) % (len - 2));
       ctx.beginPath(); ctx.moveTo(tx, sy - 7); ctx.lineTo(tx + 3, sy - 11); ctx.lineTo(tx + 6, sy - 7); ctx.fill();
       ctx.beginPath(); ctx.moveTo(tx, sy + 4); ctx.lineTo(tx + 3, sy + 8); ctx.lineTo(tx + 6, sy + 4); ctx.fill();
     }
@@ -583,6 +623,11 @@ canvas{display:block;width:100%;height:100%}
   function drawHud() {
     label(String(score()), 16, 30, 28);
     label('BEST ' + best, 16, 56, 15, 'left', '#ffe066');
+    if (bob.mega > 0) {
+      label('MEGA SAW', 16, 80, 15, 'left', '#ffd33d');
+      ctx.fillStyle = C.ink; rr(16, 90, 104, 10, 5);
+      ctx.fillStyle = '#ffd33d'; rr(18, 92, 100 * bob.mega / 6, 6, 3);
+    }
     for (let i = 0; i < 3; i++) heart(W - 26 - i * 32, 14, 24, i < S.hearts ? C.heart : 'rgba(0,0,0,.25)');
     const b = S.boss;
     if (b && b.state !== 'enter') {
@@ -602,7 +647,7 @@ canvas{display:block;width:100%;height:100%}
     if (S.shake > 0 && !RM) ctx.translate((Math.random() - .5) * 10 * S.shake / .3, (Math.random() - .5) * 10 * S.shake / .3);
     drawWorld();
     drawBoss();
-    for (const o of S.obs) o.kind === 'log' ? drawLog(o) : drawFood(o);
+    for (const o of S.obs) o.kind === 'log' ? drawLog(o) : o.kind === 'power' ? drawPower(o) : drawFood(o);
     drawBob();
     for (const p of S.parts) {
       ctx.globalAlpha = Math.min(1, p.life * 2);
