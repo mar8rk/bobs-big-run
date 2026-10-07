@@ -66,6 +66,7 @@ canvas{display:block;width:100%;height:100%}
     <p><b>Flying snacks.</b> They show up later, up high. Stay on the ground and chop the logs instead.</p>
     <p><b>The Cake King.</b> At 800 points a giant cake with a crown stomps in, throwing cupcakes. You can't jump him. Wait for him to charge, then chainsaw him until he's crumbs.</p>
     <p><b>Big Timber.</b> The next boss is a giant angry oak that never stops stomping toward you. Chop or jump the logs he hurls, jump the apples, and chainsaw his trunk when he gets close.</p>
+    <p><b>Hat-thief crows.</b> They swoop up and down. Chop them when they dip low, or jump them. If one reaches Bob it steals his hat, and you chop the next crow to get it back. No hat? Then it pecks.</p>
     <p><b>Gas can.</b> Jump for the glowing gas can to get MEGA SAW: six seconds of non-stop golden chainsaw that even slices snacks.</p>
   </section>
 </div>
@@ -92,13 +93,13 @@ canvas{display:block;width:100%;height:100%}
   const S = { mode:'title', t:0, scroll:0, speed:300, dist:0, bonus:0, hearts:3, snacks:0,
               obs:[], parts:[], pops:[], spawnIn:1, shake:0, overT:0, reason:'', final:0, newBest:false,
               boss:null, nextBoss:800, bossCount:0, megaBuzz:0 };
-  const bob = { y:GROUND, vy:0, ground:true, run:0, saw:0, sawCd:0, inv:0, eat:0, trip:0, belly:1, mega:0 };
+  const bob = { y:GROUND, vy:0, ground:true, run:0, saw:0, sawCd:0, inv:0, eat:0, trip:0, belly:1, mega:0, hatless:false };
 
   function reset() {
     Object.assign(S, { mode:'play', t:0, speed:300, dist:0, bonus:0, hearts:3, snacks:0,
                        obs:[], parts:[], pops:[], spawnIn:1, shake:0, overT:0,
                        boss:null, nextBoss:800, bossCount:0, megaBuzz:0 });
-    Object.assign(bob, { y:GROUND, vy:0, ground:true, saw:0, sawCd:0, inv:0, eat:0, trip:0, belly:1, mega:0 });
+    Object.assign(bob, { y:GROUND, vy:0, ground:true, saw:0, sawCd:0, inv:0, eat:0, trip:0, belly:1, mega:0, hatless:false });
   }
   const score = () => Math.floor(S.dist / 10) + S.bonus;
 
@@ -130,6 +131,7 @@ canvas{display:block;width:100%;height:100%}
     over: () => { audio.tone(420, 300, .25, 'triangle', .2); audio.tone(300, 200, .25, 'triangle', .2, .25); audio.tone(200, 90, .5, 'triangle', .2, .5); },
     boss: () => { audio.tone(110, 100, .4, 'sawtooth', .12); audio.tone(98, 90, .4, 'sawtooth', .12, .45); audio.tone(82, 60, .8, 'sawtooth', .14, .9); },
     toss: () => audio.tone(500, 900, .1, 'sine', .1),
+    caw:  () => { audio.tone(900, 500, .12, 'sawtooth', .08); audio.tone(850, 450, .12, 'sawtooth', .08, .15); },
     win:  () => [523, 659, 784, 1047].forEach((f, i) => audio.tone(f, f, .18, 'square', .1, i * .12))
   };
 
@@ -153,6 +155,8 @@ canvas{display:block;width:100%;height:100%}
     const sc = score(), r = Math.random();
     if (sc > 150 && bob.mega <= 0 && r < .08) {
       S.obs.push({ kind:'power', x:W + 40, y:GROUND - 150, w:30, h:34, ph:Math.random()*6 });
+    } else if (sc > 200 && r > .86) {
+      S.obs.push({ kind:'crow', x:W + 40, baseY:GROUND - 100, y:GROUND - 100, w:34, h:22, ph:Math.random()*6 });
     } else if (sc > 300 && r < .22) {
       S.obs.push({ kind:'food', food:pick(FOODS), air:true, x:W + 40, y:GROUND - 150, w:40, h:34, ph:Math.random()*6 });
     } else if (r < .62) {
@@ -189,6 +193,30 @@ canvas{display:block;width:100%;height:100%}
     pop('SNACK SLICED! +25', o.x + o.w/2, o.y - 12, '#ffd33d');
     burst(o.x + o.w/2, o.y + o.h/2, 14, '#e3a14a');
     sfx.chop();
+  }
+  // Hat-thief crows swoop up and down. A crow that reaches Bob steals his hat;
+  // a hatless Bob gets pecked instead. Chopping a crow wins the hat back.
+  function chopCrow(o) {
+    o.dead = true;
+    S.bonus += 40;
+    pop('CAW! +40', o.x + 17, o.y - 12, '#fff');
+    burst(o.x + 17, o.y + 10, 12, '#23262b', 260, 200);
+    sfx.caw(); sfx.chop();
+    if (bob.hatless) { bob.hatless = false; pop('GOT THE HAT BACK!', BX + 40, bob.y - 150, '#7fd36b'); }
+  }
+  function crowHit(o) {
+    if (!bob.hatless) {
+      bob.hatless = true; o.stolen = true; bob.inv = .6;
+      pop("HEY! THAT'S BOB'S HAT!", W / 2, 110, '#ffe066');
+      sfx.caw();
+    } else {
+      o.dead = true;
+      S.hearts--; bob.inv = 1.3;
+      pop('PECK!', BX + 20, bob.y - 130, '#fff');
+      burst(BX + 10, bob.y - 100, 8, '#23262b', 200, 150);
+      sfx.caw(); sfx.thud();
+      if (S.hearts <= 0) gameOver('crow');
+    }
   }
   function chopLog(o) {
     o.dead = true;
@@ -265,6 +293,14 @@ canvas{display:block;width:100%;height:100%}
       for (const o of S.obs) {
         o.x -= S.speed * dt;
         if (o.dead || S.mode !== 'play') continue;
+        if (o.kind === 'crow') {
+          o.x -= 90 * dt;   // crows fly faster than the ground scrolls
+          if (o.stolen) { o.y -= 120 * dt; continue; }
+          o.y = o.baseY + Math.sin(S.t * 4 + o.ph) * 30;
+          if (saw && hit(saw, o)) chopCrow(o);
+          else if (bob.inv <= 0 && hit(hb, o)) crowHit(o);
+          continue;
+        }
         if (o.kind === 'power') { if (hit(hb, o)) powerUp(o); continue; }
         if (o.kind === 'log' && saw && hit(saw, o)) { chopLog(o); continue; }
         if (o.kind === 'food' && bob.mega > 0 && saw && hit(saw, o)) { sliceFood(o); continue; }
@@ -581,6 +617,22 @@ canvas{display:block;width:100%;height:100%}
     }
   }
 
+  function drawCrow(o) {
+    const x = o.x, y = o.y, flap = Math.sin(S.t * 18 + o.ph);
+    ctx.fillStyle = '#23262b';
+    ellipse(x + 18, y + 12, 16, 9); circle(x + 5, y + 7, 7);
+    ctx.beginPath(); ctx.moveTo(x + 32, y + 10); ctx.lineTo(x + 43, y + 5); ctx.lineTo(x + 41, y + 17); ctx.fill();
+    ctx.fillStyle = '#353a42';
+    ctx.beginPath(); ctx.moveTo(x + 12, y + 10); ctx.lineTo(x + 28, y - 6 - flap * 10); ctx.lineTo(x + 34, y + 9); ctx.fill();
+    ctx.fillStyle = '#ff8a1f'; ctx.beginPath(); ctx.moveTo(x, y + 5); ctx.lineTo(x - 10, y + 8); ctx.lineTo(x, y + 11); ctx.fill();
+    ctx.fillStyle = '#fff'; circle(x + 4, y + 5, 2.6);
+    ctx.fillStyle = '#222'; circle(x + 3.4, y + 5, 1.3);
+    if (o.stolen) {   // Bob's cap, dangling from its feet
+      ctx.fillStyle = '#2f7d4f'; ctx.beginPath(); ctx.ellipse(x + 18, y + 30, 11, 9, 0, Math.PI, 0); ctx.fill();
+      ctx.fillStyle = '#245f3c'; ellipse(x + 8, y + 30, 8, 2.5);
+      ctx.strokeStyle = '#ff8a1f'; ctx.lineWidth = 2; line(x + 16, y + 19, x + 17, y + 23); line(x + 21, y + 19, x + 20, y + 23);
+    }
+  }
   function drawPower(o) {
     const x = o.x, y = o.y + Math.sin(S.t * 5 + o.ph) * 5;
     ctx.fillStyle = 'rgba(255,211,61,.35)'; circle(x + 15, y + 17, 24 + Math.sin(S.t * 8) * 3);
@@ -673,7 +725,8 @@ canvas{display:block;width:100%;height:100%}
     ctx.fillStyle = C.skin; circle(hx, hy, 18);
     ctx.fillStyle = C.skinDark; circle(hx - 14, hy + 2, 5);
     ctx.fillStyle = C.grey; circle(hx - 16, hy - 4, 6); circle(hx - 12, hy - 11, 5);
-    drawHat(hx, hy);
+    if (bob.hatless) { ctx.fillStyle = 'rgba(255,255,255,.6)'; ellipse(hx + 2, hy - 12, 7, 3); }
+    else drawHat(hx, hy);
     ctx.fillStyle = '#fff'; circle(hx + 9, hy - 3, 4.5);
     ctx.fillStyle = '#222'; circle(hx + 10.5, hy - 3, 2.3);
     ctx.strokeStyle = C.grey; ctx.lineWidth = 3.5; ctx.lineCap = 'round'; line(hx + 4, hy - 9, hx + 14, hy - 11); ctx.lineCap = 'butt';
@@ -719,7 +772,7 @@ canvas{display:block;width:100%;height:100%}
     if (S.shake > 0 && !RM) ctx.translate((Math.random() - .5) * 10 * S.shake / .3, (Math.random() - .5) * 10 * S.shake / .3);
     drawWorld();
     drawBoss();
-    for (const o of S.obs) o.kind === 'log' ? drawLog(o) : o.kind === 'power' ? drawPower(o) : drawFood(o);
+    for (const o of S.obs) o.kind === 'log' ? drawLog(o) : o.kind === 'power' ? drawPower(o) : o.kind === 'crow' ? drawCrow(o) : drawFood(o);
     drawBob();
     for (const p of S.parts) {
       ctx.globalAlpha = Math.min(1, p.life * 2);
@@ -748,6 +801,7 @@ canvas{display:block;width:100%;height:100%}
       food: ['BOB ATE TOO MANY SNACKS', 'Nap time. Zzzzz...'],
       log:  ['BOB TRIPPED ONE TOO MANY TIMES', 'Ouch. Somebody get Bob an ice pack.'],
       boss: ['THE CAKE KING WINS', 'Bob ate half the kingdom. Nap time.'],
+      crow: ['THE CROWS WIN', 'They took the hat AND the snacks.'],
       tree: ['BIG TIMBER WINS', 'Bob got stomped flat as a pancake. Mmm, pancakes...']
     };
     if (S.mode === 'over') overlay([
