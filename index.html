@@ -64,6 +64,7 @@ canvas{display:block;width:100%;height:100%}
     <p><b>Logs.</b> Rev the chainsaw to chop them for +25 points, or jump right over.</p>
     <p><b>Snacks.</b> Bob's one weakness. Jump over them. Every snack he eats makes him bigger and costs a heart.</p>
     <p><b>Flying snacks.</b> They show up later, up high. Stay on the ground and chop the logs instead.</p>
+    <p><b>The Cake King.</b> At 800 points a giant cake with a crown stomps in, throwing cupcakes. You can't jump him. Wait for him to charge, then chainsaw him until he's crumbs.</p>
   </section>
 </div>
 
@@ -87,12 +88,14 @@ canvas{display:block;width:100%;height:100%}
   const saveBest = () => { try { localStorage.setItem('bob-best', String(best)); } catch (e) {} };
 
   const S = { mode:'title', t:0, scroll:0, speed:300, dist:0, bonus:0, hearts:3, snacks:0,
-              obs:[], parts:[], pops:[], spawnIn:1, shake:0, overT:0, reason:'', final:0, newBest:false };
+              obs:[], parts:[], pops:[], spawnIn:1, shake:0, overT:0, reason:'', final:0, newBest:false,
+              boss:null, nextBoss:800, bossCount:0 };
   const bob = { y:GROUND, vy:0, ground:true, run:0, saw:0, sawCd:0, inv:0, eat:0, trip:0, belly:1 };
 
   function reset() {
     Object.assign(S, { mode:'play', t:0, speed:300, dist:0, bonus:0, hearts:3, snacks:0,
-                       obs:[], parts:[], pops:[], spawnIn:1, shake:0, overT:0 });
+                       obs:[], parts:[], pops:[], spawnIn:1, shake:0, overT:0,
+                       boss:null, nextBoss:800, bossCount:0 });
     Object.assign(bob, { y:GROUND, vy:0, ground:true, saw:0, sawCd:0, inv:0, eat:0, trip:0, belly:1 });
   }
   const score = () => Math.floor(S.dist / 10) + S.bonus;
@@ -122,7 +125,10 @@ canvas{display:block;width:100%;height:100%}
     chop: () => { audio.tone(700, 120, .12, 'square', .12); audio.tone(200, 60, .2, 'triangle', .2, .04); },
     munch:() => { audio.tone(260, 170, .08, 'square', .12); audio.tone(240, 150, .08, 'square', .12, .12); audio.tone(220, 140, .08, 'square', .12, .24); },
     thud: () => audio.tone(150, 45, .3, 'triangle', .35),
-    over: () => { audio.tone(420, 300, .25, 'triangle', .2); audio.tone(300, 200, .25, 'triangle', .2, .25); audio.tone(200, 90, .5, 'triangle', .2, .5); }
+    over: () => { audio.tone(420, 300, .25, 'triangle', .2); audio.tone(300, 200, .25, 'triangle', .2, .25); audio.tone(200, 90, .5, 'triangle', .2, .5); },
+    boss: () => { audio.tone(110, 100, .4, 'sawtooth', .12); audio.tone(98, 90, .4, 'sawtooth', .12, .45); audio.tone(82, 60, .8, 'sawtooth', .14, .9); },
+    toss: () => audio.tone(500, 900, .1, 'sine', .1),
+    win:  () => [523, 659, 784, 1047].forEach((f, i) => audio.tone(f, f, .18, 'square', .1, i * .12))
   };
 
   /* ---------- actions ---------- */
@@ -221,8 +227,11 @@ canvas{display:block;width:100%;height:100%}
       bob.eat = Math.max(0, bob.eat - dt);
       bob.trip = Math.max(0, bob.trip - dt);
 
-      S.spawnIn -= dt;
-      if (S.spawnIn <= 0) spawn();
+      if (!S.boss && score() >= S.nextBoss) startBoss();
+      if (!S.boss) {
+        S.spawnIn -= dt;
+        if (S.spawnIn <= 0) spawn();
+      }
 
       const hb = bobBox(), saw = bob.saw > 0 ? sawBox() : null;
       for (const o of S.obs) {
@@ -233,6 +242,7 @@ canvas{display:block;width:100%;height:100%}
           if (o.kind === 'food') { o.dead = true; eatFood(o); } else tripLog(o);
         }
       }
+      if (S.mode === 'play') updateBoss(dt, hb, saw);
       S.obs = S.obs.filter(o => !o.dead && o.x + o.w > -30);
     } else {
       S.scroll += (S.mode === 'title' ? 140 : 0) * dt;
@@ -243,12 +253,114 @@ canvas{display:block;width:100%;height:100%}
     for (const p of S.parts) {
       p.vy += (p.smoke ? -40 : 1100) * dt;
       p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt;
-      if (p.log) p.rot += p.vr * dt;
+      if (p.vr) p.rot += p.vr * dt;
     }
     S.parts = S.parts.filter(p => p.life > 0 && p.y < H + 60);
     for (const p of S.pops) { p.y -= 40 * dt; p.life -= dt * .9; }
     S.pops = S.pops.filter(p => p.life > 0);
     S.shake = Math.max(0, S.shake - dt);
+  }
+
+  /* ---------- the boss: the Cake King ---------- */
+  // Shows up every so often, tosses cupcakes, then charges. Bob can't jump him;
+  // only the chainsaw works. Touching him means Bob takes a bite (and a heart).
+  const HOME_X = 440;
+  function startBoss() {
+    const hp = 5 + S.bossCount * 2;
+    S.boss = { x:W + 40, w:110, h:128, hp, maxHp:hp, state:'enter', t:0, idleFor:2.5, throwIn:1.2, hurt:0, vx:0, step:0 };
+    pop('THE CAKE KING APPROACHES!', W / 2, 110, '#ff7eb6');
+    sfx.boss();
+  }
+  const bossBox = b => ({ x:b.x + 8, y:GROUND - b.h, w:b.w - 16, h:b.h });
+  function knockBack(b, v) { b.state = 'back'; b.vx = v; }
+
+  function updateBoss(dt, hb, saw) {
+    const b = S.boss;
+    if (!b) return;
+    b.t += dt; b.hurt = Math.max(0, b.hurt - dt); b.step += dt * 9;
+    if (b.state === 'enter') {
+      b.x -= 160 * dt;
+      if (b.x <= HOME_X) { b.x = HOME_X; b.state = 'idle'; b.t = 0; }
+    } else if (b.state === 'idle') {
+      b.throwIn -= dt;
+      if (b.throwIn <= 0) {
+        S.obs.push({ kind:'food', food:'cupcake', x:b.x - 10, y:GROUND - 34, w:32, h:34 });
+        b.throwIn = 1.1 + Math.random() * .8; sfx.toss();
+      }
+      if (b.t > b.idleFor) { b.state = 'lunge'; b.t = 0; }
+    } else if (b.state === 'lunge') {
+      b.x -= (190 + S.bossCount * 25) * dt;
+    } else if (b.state === 'back') {
+      b.x += b.vx * dt; b.vx = Math.max(160, b.vx - 600 * dt);
+      if (b.x >= HOME_X) { b.x = HOME_X; b.state = 'idle'; b.t = 0; b.throwIn = .8; b.idleFor = 2 + Math.random() * 1.2; }
+    }
+
+    const box = bossBox(b);
+    if (saw && b.hurt <= 0 && b.state !== 'back' && hit(saw, box)) {
+      b.hp--; b.hurt = .45; knockBack(b, 520);
+      S.bonus += 50;
+      pop('SLICE! +50', b.x + 20, GROUND - b.h - 12, C.sawBody);
+      burst(b.x + 10, GROUND - 60, 18, '#ffb3d1'); burst(b.x + 10, GROUND - 60, 8, '#fff6d8');
+      S.shake = .2; sfx.chop();
+      if (b.hp <= 0) defeatBoss();
+    } else if (b.state === 'lunge' && hit(hb, box)) {
+      knockBack(b, 420);
+      if (bob.inv <= 0) {
+        S.hearts--; S.snacks++;
+        bob.belly = 1 + S.snacks * .14; bob.eat = .8; bob.inv = 1.3;
+        pop('BOB TOOK A BITE OF THE KING!', W / 2, 110, '#ffe066');
+        burst(BX + 40, bob.y - 60, 14, '#ffb3d1');
+        sfx.munch();
+        if (S.hearts <= 0) gameOver('boss');
+      }
+    }
+  }
+  function defeatBoss() {
+    const b = S.boss;
+    S.bonus += 500; S.bossCount++;
+    ['#ff7eb6','#fff6d8','#ffd33d','#ffb3d1'].forEach((c, i) => burst(b.x + 20 + i * 20, GROUND - 40 - i * 20, 14, c, 420, 520));
+    S.parts.push({ crown:true, x:b.x + 30, y:GROUND - b.h - 18, vx:140, vy:-520, rot:0, vr:5, life:2 });
+    pop('YOU BEAT THE CAKE KING! +500', W / 2, 100, '#ffd33d');
+    pop('(Bob is still a little hungry)', W / 2, 130, '#fff');
+    S.boss = null; S.nextBoss = score() + 1500; S.spawnIn = 1.6; S.shake = .3;
+    sfx.win();
+  }
+
+  function drawCrown(x, y) {   // x,y = top-left of a 50x32 crown
+    ctx.fillStyle = '#ffd33d'; ctx.beginPath();
+    ctx.moveTo(x, y + 32); ctx.lineTo(x, y + 8); ctx.lineTo(x + 12, y + 20); ctx.lineTo(x + 25, y);
+    ctx.lineTo(x + 38, y + 20); ctx.lineTo(x + 50, y + 8); ctx.lineTo(x + 50, y + 32); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#d8412f'; circle(x + 25, y + 22, 4);
+    ctx.fillStyle = '#4dd0ff'; circle(x + 11, y + 26, 3); circle(x + 39, y + 26, 3);
+  }
+  function drawBoss() {
+    const b = S.boss;
+    if (!b) return;
+    if (b.hurt > 0 && Math.floor(b.hurt * 20) % 2 === 0) ctx.globalAlpha = .45;
+    const x = b.x, g = GROUND, w = b.w, walk = b.state === 'idle' ? 0 : Math.sin(b.step);
+    ctx.fillStyle = '#7a4a2a'; rr(x + 24 + walk * 6, g - 18, 14, 18, 4); rr(x + w - 38 - walk * 6, g - 18, 14, 18, 4);
+    ctx.fillStyle = '#3a2716'; rr(x + 18 + walk * 6, g - 7, 24, 8, 3); rr(x + w - 44 - walk * 6, g - 7, 24, 8, 3);
+    ctx.save();
+    ctx.translate(0, b.state === 'idle' ? Math.sin(b.t * 4) * 2 : -Math.abs(walk) * 3);
+    // bottom tier, strawberry, with vanilla drips
+    ctx.fillStyle = '#ff9cc4'; rr(x, g - 72, w, 56, 10);
+    ctx.fillStyle = '#fff6f0'; rr(x, g - 74, w, 12, 6);
+    for (let i = 0; i < 6; i++) ellipse(x + 10 + i * 18, g - 62, 6, 5 + (i % 2) * 4);
+    ['#4dd0ff','#ffe066','#7fd36b','#fff'].forEach((c, i) => { ctx.fillStyle = c; rr(x + 72 + (i % 2) * 14, g - 50 + i * 7, 6, 3, 1.5); });
+    // top tier, vanilla, with strawberry drips
+    ctx.fillStyle = '#fff0b3'; rr(x + 15, g - 114, w - 30, 44, 9);
+    ctx.fillStyle = '#ff7eb6'; rr(x + 15, g - 116, w - 30, 10, 5);
+    for (let i = 0; i < 4; i++) ellipse(x + 25 + i * 20, g - 106, 5, 4 + (i % 2) * 4);
+    drawCrown(x + 30, g - 148);
+    // angry face, looking at Bob
+    ctx.fillStyle = '#fff'; circle(x + 28, g - 46, 9); circle(x + 54, g - 46, 9);
+    ctx.fillStyle = '#222'; circle(x + 24, g - 45, 4.2); circle(x + 50, g - 45, 4.2);
+    ctx.strokeStyle = '#5a2a22'; ctx.lineWidth = 4; ctx.lineCap = 'round';
+    line(x + 17, g - 61, x + 36, g - 55); line(x + 65, g - 61, x + 46, g - 55); ctx.lineCap = 'butt';
+    ctx.fillStyle = '#5a2a22'; ellipse(x + 40, g - 28, 16, b.state === 'lunge' ? 9 : 5);
+    ctx.fillStyle = '#fff'; for (let i = 0; i < 4; i++) ctx.fillRect(x + 28 + i * 7, g - 33, 4, 4);
+    ctx.restore();
+    ctx.globalAlpha = 1;
   }
 
   /* ---------- drawing helpers ---------- */
@@ -356,6 +468,11 @@ canvas{display:block;width:100%;height:100%}
         ctx.fillStyle = '#ffcf5a'; ctx.beginPath(); ctx.moveTo(cx - 18, cy - 14); ctx.lineTo(cx + 18, cy - 14); ctx.lineTo(cx, cy + 18); ctx.fill();
         ctx.fillStyle = '#c9862f'; rr(cx - 20, cy - 18, 40, 7, 3);
         ctx.fillStyle = '#d8412f'; circle(cx - 6, cy - 6, 4); circle(cx + 6, cy - 4, 3.5); circle(cx, cy + 5, 3);
+        break;
+      case 'cupcake':
+        ctx.fillStyle = '#5bb6e8'; ctx.beginPath(); ctx.moveTo(cx - 13, cy); ctx.lineTo(cx + 13, cy); ctx.lineTo(cx + 9, cy + 17); ctx.lineTo(cx - 9, cy + 17); ctx.fill();
+        ctx.fillStyle = '#ffb3d1'; ellipse(cx, cy - 2, 15, 8); ellipse(cx, cy - 9, 10, 6);
+        ctx.fillStyle = '#d8412f'; circle(cx, cy - 16, 3.5);
         break;
       default: // drumstick
         ctx.fillStyle = '#f3ead6'; rr(cx + 6, cy - 3, 14, 6, 3); circle(cx + 20, cy - 4, 4); circle(cx + 20, cy + 4, 4);
@@ -467,6 +584,12 @@ canvas{display:block;width:100%;height:100%}
     label(String(score()), 16, 30, 28);
     label('BEST ' + best, 16, 56, 15, 'left', '#ffe066');
     for (let i = 0; i < 3; i++) heart(W - 26 - i * 32, 14, 24, i < S.hearts ? C.heart : 'rgba(0,0,0,.25)');
+    const b = S.boss;
+    if (b && b.state !== 'enter') {
+      label('THE CAKE KING', W / 2, 20, 16, 'center', '#ff7eb6');
+      ctx.fillStyle = C.ink; rr(W / 2 - 92, 32, 184, 14, 7);
+      ctx.fillStyle = '#ff7eb6'; if (b.hp > 0) rr(W / 2 - 89, 35, 178 * b.hp / b.maxHp, 8, 4);
+    }
   }
   function overlay(lines) {
     ctx.fillStyle = 'rgba(20,32,25,.55)'; ctx.fillRect(0, 0, W, H);
@@ -478,11 +601,14 @@ canvas{display:block;width:100%;height:100%}
     ctx.save();
     if (S.shake > 0 && !RM) ctx.translate((Math.random() - .5) * 10 * S.shake / .3, (Math.random() - .5) * 10 * S.shake / .3);
     drawWorld();
+    drawBoss();
     for (const o of S.obs) o.kind === 'log' ? drawLog(o) : drawFood(o);
     drawBob();
     for (const p of S.parts) {
       ctx.globalAlpha = Math.min(1, p.life * 2);
-      if (p.log) {
+      if (p.crown) {
+        ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot); drawCrown(-25, -16); ctx.restore();
+      } else if (p.log) {
         ctx.save(); ctx.translate(p.x + p.w / 2, p.y + p.h / 2); ctx.rotate(p.rot);
         ctx.fillStyle = '#8a5a2e'; rr(-p.w / 2, -p.h / 2, p.w, p.h, 6);
         ctx.fillStyle = '#e3b77a'; ellipse(0, 0, p.w / 3, p.h / 3);
@@ -501,9 +627,14 @@ canvas{display:block;width:100%;height:100%}
       ['Tap JUMP or CHAINSAW to start', 190, 18, '#7fd36b'],
       [best ? 'Best: ' + best : '', 222, 16, '#ffe066']
     ]);
+    const OVER = {
+      food: ['BOB ATE TOO MANY SNACKS', 'Nap time. Zzzzz...'],
+      log:  ['BOB TRIPPED ONE TOO MANY TIMES', 'Ouch. Somebody get Bob an ice pack.'],
+      boss: ['THE CAKE KING WINS', 'Bob ate half the kingdom. Nap time.']
+    };
     if (S.mode === 'over') overlay([
-      [S.reason === 'food' ? 'BOB ATE TOO MANY SNACKS' : 'BOB TRIPPED ONE TOO MANY TIMES', 92, 28, '#ff8a1f'],
-      [S.reason === 'food' ? 'Nap time. Zzzzz...' : 'Ouch. Somebody get Bob an ice pack.', 128, 18, '#fff'],
+      [OVER[S.reason][0], 92, 28, '#ff8a1f'],
+      [OVER[S.reason][1], 128, 18, '#fff'],
       ['Score: ' + S.final, 172, 34, '#fff'],
       [S.newBest ? 'NEW BEST!' : 'Best: ' + best, 210, 20, '#ffe066'],
       [S.overT > .8 ? 'Tap to run again' : '', 250, 18, '#7fd36b']
